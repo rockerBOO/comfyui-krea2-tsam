@@ -43,7 +43,7 @@ class MapCollector:
     def __call__(self, q, k, v, pe=None, attn_mask=None, extra_options=None):
         if not self.layer_lo <= extra_options["block_index"] < self.layer_hi:
             return {}
-        img_end = extra_options["img_slice"][1] - sum(extra_options["reference_image_num_tokens"])
+        img_end = extra_options["img_slice"][1] - sum(extra_options.get("reference_image_num_tokens", []))
         b = self.batch_index
         qb, kb = q[b:b + 1], k[b:b + 1]
         if pe is not None:
