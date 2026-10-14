@@ -7,6 +7,7 @@ import comfy.patcher_extension as pe
 from comfy.ldm.krea2.model import SingleStreamDiT
 from krea2_tsam import probe, tsam, wrapper
 
+_ORIG_LINEAR = torch.nn.functional.linear
 SAMPLE_SIGMAS = torch.tensor([1.0, 0.75, 0.5, 0.25, 0.0])
 
 
@@ -94,3 +95,20 @@ def test_checkpointed_gradient_matches_plain_autograd():
     finally:
         mm.in_training = False
     assert torch.allclose(plain, ckpt, atol=1e-5, rtol=1e-4)
+
+
+def test_inference_mode_weights_and_inputs():
+    with torch.inference_mode():
+        m = tiny_dit()
+        for p in m.parameters():
+            assert p.is_inference()
+        t = target()
+        opts = {"cond_or_uncond": [0], "sigmas": torch.tensor([1.0]), "sample_sigmas": SAMPLE_SIGMAS}
+        pe.add_wrapper_with_key(pe.WrappersMP.DIFFUSION_MODEL, "tsam", wrapper.TSAMWrapper(t, cfg()), opts)
+        x = torch.randn(1, 4, 8, 8)
+        ctx = torch.randn(1, 5, 48)
+        out = m(x, torch.tensor([1.0]), ctx, transformer_options=opts)
+        plain = m(x, torch.tensor([1.0]), ctx, transformer_options={"cond_or_uncond": [0], "sigmas": torch.tensor([1.0]), "sample_sigmas": SAMPLE_SIGMAS})
+    assert torch.isfinite(out).all()
+    assert not torch.allclose(out, plain)
+    assert torch.nn.functional.linear is _ORIG_LINEAR

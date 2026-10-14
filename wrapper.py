@@ -1,3 +1,5 @@
+import contextlib
+
 import torch
 
 import comfy.model_management
@@ -29,6 +31,25 @@ class BlockCheckpoint(torch.autograd.Function):
 
 class _Stop(Exception):
     pass
+
+
+@contextlib.contextmanager
+def _linear_clones_inference_weights():
+    """The sampler loads weights under inference mode, and autograd refuses to save those for backward."""
+    linear = torch.nn.functional.linear
+
+    def patched(x, weight, bias=None):
+        if weight.is_inference():
+            weight = weight.clone()
+        if bias is not None and bias.is_inference():
+            bias = bias.clone()
+        return linear(x, weight, bias)
+
+    torch.nn.functional.linear = patched
+    try:
+        yield
+    finally:
+        torch.nn.functional.linear = linear
 
 
 class TSAMWrapper:
@@ -82,15 +103,18 @@ class TSAMWrapper:
         lo, hi = cfg["layer_start"], min(cfg["layer_end"], len(dit.blocks))
         sigma = transformer_options["sigmas"][b].to(x.dtype)
         x_new = x
-        with torch.inference_mode(False):
+        with torch.inference_mode(False), _linear_clones_inference_weights():
             comfy.model_management.in_training = True
             try:
+                timesteps_g, context_g = timesteps.clone(), context.clone()
+                mask_g = None if attention_mask is None else attention_mask.clone()
+                refs_g = None if ref_latents is None else [r.clone() for r in ref_latents]
                 for _ in range(cfg["iters_per_step"]):
                     xg = x_new.detach().clone().requires_grad_(True)
                     maps = []
                     undo = self._install(dit, lo, hi, context.shape[1], b, maps)
                     try:
-                        executor.original(xg, timesteps, context, attention_mask, ref_latents, transformer_options, **kwargs)
+                        executor.original(xg, timesteps_g, context_g, mask_g, refs_g, transformer_options, **kwargs)
                     except _Stop:
                         pass
                     finally:
