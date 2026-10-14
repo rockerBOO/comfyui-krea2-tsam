@@ -39,18 +39,18 @@ def _differentiable_attention(func, *args, **kwargs):
     return comfy.ldm.modules.attention.attention_pytorch(*args, **kwargs)
 
 
-def _normal(t):
-    return t.clone() if torch.is_tensor(t) and t.is_inference() else t
+def _owned(t):
+    return t.clone() if torch.is_tensor(t) else t
 
 
 @contextlib.contextmanager
 def _linear_clones_inference_weights():
-    """The sampler loads weights under inference mode, and autograd refuses to save those for backward."""
+    """Weights are inference tensors that autograd refuses to save, and offloaded ones can be reused once the layer returns, so backward gets its own copies."""
     linear = torch.nn.functional.linear
     quant_apply = comfy.ops.QuantLinearFunc.apply
 
-    torch.nn.functional.linear = lambda x, weight, bias=None: linear(x, _normal(weight), _normal(bias))
-    comfy.ops.QuantLinearFunc.apply = lambda input, weight, bias, *rest: quant_apply(input, _normal(weight), _normal(bias), *rest)
+    torch.nn.functional.linear = lambda x, weight, bias=None: linear(x, _owned(weight), _owned(bias))
+    comfy.ops.QuantLinearFunc.apply = lambda input, weight, bias, *rest: quant_apply(input, _owned(weight), _owned(bias), *rest)
     try:
         yield
     finally:
