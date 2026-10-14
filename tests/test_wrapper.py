@@ -5,7 +5,7 @@ import comfy.model_management as mm
 import comfy.ops
 import comfy.patcher_extension as pe
 from comfy.ldm.krea2.model import SingleStreamDiT
-from krea2_tsam import wrapper
+from krea2_tsam import probe, tsam, wrapper
 
 SAMPLE_SIGMAS = torch.tensor([1.0, 0.75, 0.5, 0.25, 0.0])
 
@@ -16,6 +16,7 @@ def tiny_dit():
                         channels=4, txtlayers=3, txtheads=2, txtkvheads=2, operations=comfy.ops.disable_weight_init)
     for p in m.parameters():
         torch.nn.init.normal_(p, std=0.05)
+        p.requires_grad_(False)
     return m
 
 
@@ -56,3 +57,40 @@ def test_training_flag_restored_and_output_finite():
 def test_target_size_mismatch_raises():
     with pytest.raises(ValueError, match="Krea2 T-SAM Encode"):
         run(tiny_dit(), cfg(), 1.0, tgt=target(4))
+
+
+def test_blocks_restored_after_step():
+    m = tiny_dit()
+    run(m, cfg(), 1.0)
+    assert all("forward" not in b.__dict__ for b in m.blocks)
+
+
+def test_checkpointed_gradient_matches_plain_autograd():
+    m = tiny_dit()
+    x = torch.randn(1, 4, 8, 8, generator=torch.Generator().manual_seed(2))
+    ctx = torch.randn(1, 5, 48, generator=torch.Generator().manual_seed(3))
+    tgt = target()
+    lo, hi = 1, 3
+
+    mm.in_training = True
+    try:
+        xg = x.clone().requires_grad_(True)
+        col = probe.MapCollector(5, lo, hi, 0)
+        opts = {"patches": {"attn1_patch": [col]}}
+        m(xg, torch.tensor([1.0]), ctx, transformer_options=opts)
+        plain, = torch.autograd.grad(tsam.tsam_loss(tgt, col.mean(), 2.0), xg)
+
+        xg = x.clone().requires_grad_(True)
+        maps = []
+        w = wrapper.TSAMWrapper(tgt, cfg())
+        undo = w._install(m, lo, hi, 5, 0, maps)
+        try:
+            m(xg, torch.tensor([1.0]), ctx)
+        except wrapper._Stop:
+            pass
+        finally:
+            undo()
+        ckpt, = torch.autograd.grad(tsam.tsam_loss(tgt, torch.stack(maps).mean(0), 2.0), xg)
+    finally:
+        mm.in_training = False
+    assert torch.allclose(plain, ckpt, atol=1e-5, rtol=1e-4)
