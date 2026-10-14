@@ -2,7 +2,9 @@ import contextlib
 
 import torch
 
+import comfy.ldm.modules.attention
 import comfy.model_management
+import comfy.ops
 
 from . import probe, tsam
 
@@ -33,23 +35,27 @@ class _Stop(Exception):
     pass
 
 
+def _differentiable_attention(func, *args, **kwargs):
+    return comfy.ldm.modules.attention.attention_pytorch(*args, **kwargs)
+
+
+def _normal(t):
+    return t.clone() if torch.is_tensor(t) and t.is_inference() else t
+
+
 @contextlib.contextmanager
 def _linear_clones_inference_weights():
     """The sampler loads weights under inference mode, and autograd refuses to save those for backward."""
     linear = torch.nn.functional.linear
+    quant_apply = comfy.ops.QuantLinearFunc.apply
 
-    def patched(x, weight, bias=None):
-        if weight.is_inference():
-            weight = weight.clone()
-        if bias is not None and bias.is_inference():
-            bias = bias.clone()
-        return linear(x, weight, bias)
-
-    torch.nn.functional.linear = patched
+    torch.nn.functional.linear = lambda x, weight, bias=None: linear(x, _normal(weight), _normal(bias))
+    comfy.ops.QuantLinearFunc.apply = lambda input, weight, bias, *rest: quant_apply(input, _normal(weight), _normal(bias), *rest)
     try:
         yield
     finally:
         torch.nn.functional.linear = linear
+        del comfy.ops.QuantLinearFunc.apply
 
 
 class TSAMWrapper:
@@ -78,7 +84,7 @@ class TSAMWrapper:
             def run(xi):
                 collector = probe.MapCollector(txtlen, lo, hi, batch_index)
                 patches = {**transformer_options.get("patches", {}), "attn1_patch": [collector]}
-                out = forward(xi, vec, freqs, mask, timestep_zero_index=timestep_zero_index, transformer_options={**transformer_options, "patches": patches})
+                out = forward(xi, vec, freqs, mask, timestep_zero_index=timestep_zero_index, transformer_options={**transformer_options, "patches": patches, "optimized_attention_override": _differentiable_attention})
                 return out, (collector.maps[0] if collector.maps else None)
             out, attn_map = BlockCheckpoint.apply(x, run)
             if attn_map is not None:
@@ -124,6 +130,7 @@ class TSAMWrapper:
                         a = tsam.smooth_maps(a, xg.shape[-2] // dit.patch, xg.shape[-1] // dit.patch)
                     loss = tsam.tsam_loss(self.target.to(a.device), a, cfg["gamma"])
                     grad, = torch.autograd.grad(loss, xg)
+                    comfy.model_management.synchronize()
                     if cfg["normalize_grad"]:
                         grad = grad / grad.norm().clamp_min(1e-8)
                     x_new = (xg - cfg["alpha"] * grad).detach()
