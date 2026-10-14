@@ -33,24 +33,23 @@ class AttentionProbe:
 
 
 class MapCollector:
-    def __init__(self, txtlen, layer_lo, layer_hi, batch_index):
+    def __init__(self, txtlen, layer_lo, layer_hi, rows):
         self.txtlen = txtlen
         self.layer_lo = layer_lo
         self.layer_hi = layer_hi
-        self.batch_index = batch_index
+        self.rows = rows
         self.maps = []
 
     def __call__(self, q, k, v, pe=None, attn_mask=None, extra_options=None):
         if not self.layer_lo <= extra_options["block_index"] < self.layer_hi:
             return {}
         img_end = extra_options["img_slice"][1] - sum(extra_options.get("reference_image_num_tokens", []))
-        b = self.batch_index
-        qb, kb = q[b:b + 1], k[b:b + 1]
+        qb, kb = q[self.rows], k[self.rows]
         if pe is not None:
-            qb, kb = apply_rope(qb, kb, pe[b:b + 1] if pe.shape[0] > 1 else pe)
+            qb, kb = apply_rope(qb, kb, pe[self.rows] if pe.shape[0] > 1 else pe)
         kb = kb.repeat_interleave(qb.shape[1] // kb.shape[1], dim=1)
         logits = (qb[:, :, self.txtlen:img_end] @ kb[:, :, :self.txtlen].transpose(-1, -2)) * qb.shape[-1] ** -0.5
-        self.maps.append(logits.float().softmax(-1).mean(dim=1)[0])
+        self.maps.append(logits.float().softmax(-1).mean(dim=1))
         return {}
 
     def mean(self):

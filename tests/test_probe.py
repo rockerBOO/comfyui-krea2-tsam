@@ -38,20 +38,20 @@ def test_map_collector_softmax_over_text_keys():
     txtlen, n_img = 3, 6
     L = txtlen + n_img
     q, k, v = torch.randn(1, 4, L, 8), torch.randn(1, 2, L, 8), torch.randn(1, 2, L, 8)
-    c = probe.MapCollector(txtlen=txtlen, layer_lo=0, layer_hi=2, batch_index=0)
+    c = probe.MapCollector(txtlen=txtlen, layer_lo=0, layer_hi=2, rows=[0])
     opts = {"block_index": 1, "img_slice": [txtlen, L], "reference_image_num_tokens": []}
     assert c(q, k, v, pe=None, attn_mask=None, extra_options=opts) == {}
-    assert c.maps[0].shape == (n_img, txtlen)
-    assert torch.allclose(c.maps[0].sum(-1), torch.ones(n_img), atol=1e-5)
+    assert c.maps[0].shape == (1, n_img, txtlen)
+    assert torch.allclose(c.maps[0].sum(-1), torch.ones(1, n_img), atol=1e-5)
 
 
 def test_map_collector_skips_other_layers_and_reference_tokens():
     txtlen, n_img, n_ref = 3, 4, 5
     L = txtlen + n_img + n_ref
     q = torch.randn(1, 2, L, 8)
-    c = probe.MapCollector(txtlen=txtlen, layer_lo=2, layer_hi=3, batch_index=0)
+    c = probe.MapCollector(txtlen=txtlen, layer_lo=2, layer_hi=3, rows=[0])
     opts = {"img_slice": [txtlen, L], "reference_image_num_tokens": [n_ref]}
     c(q, q, q, extra_options={**opts, "block_index": 0})
     assert c.maps == []
     c(q, q, q, extra_options={**opts, "block_index": 2})
-    assert c.maps[0].shape == (n_img, txtlen)
+    assert c.maps[0].shape == (1, n_img, txtlen)

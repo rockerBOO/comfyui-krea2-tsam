@@ -69,9 +69,18 @@ class TSAMWrapper:
         step = int((sample_sigmas - transformer_options["sigmas"][0]).abs().argmin())
         return self.cfg["start_pct"] * steps <= step < self.cfg["end_pct"] * steps
 
-    def _install(self, dit, lo, hi, txtlen, batch_index, maps):
+    def _loss(self, a, h, w):
+        target = self.target.to(a.device)
+        total = 0
+        for row in a:
+            if self.cfg["smooth"]:
+                row = tsam.smooth_maps(row, h, w)
+            total = total + tsam.tsam_loss(target, row, self.cfg["gamma"])
+        return total
+
+    def _install(self, dit, lo, hi, txtlen, rows, maps):
         for idx, block in enumerate(dit.blocks[:hi]):
-            block.forward = self._checkpointed(block.forward, idx, lo, hi, txtlen, batch_index, maps)
+            block.forward = self._checkpointed(block.forward, idx, lo, hi, txtlen, rows, maps)
 
         def undo():
             for block in dit.blocks[:hi]:
@@ -79,10 +88,10 @@ class TSAMWrapper:
         return undo
 
     @staticmethod
-    def _checkpointed(forward, idx, lo, hi, txtlen, batch_index, maps):
+    def _checkpointed(forward, idx, lo, hi, txtlen, rows, maps):
         def run_block(x, vec, freqs, mask=None, timestep_zero_index=None, transformer_options={}):
             def run(xi):
-                collector = probe.MapCollector(txtlen, lo, hi, batch_index)
+                collector = probe.MapCollector(txtlen, lo, hi, rows)
                 patches = {**transformer_options.get("patches", {}), "attn1_patch": [collector]}
                 out = forward(xi, vec, freqs, mask, timestep_zero_index=timestep_zero_index, transformer_options={**transformer_options, "patches": patches, "optimized_attention_override": _differentiable_attention})
                 return out, (collector.maps[0] if collector.maps else None)
@@ -96,18 +105,19 @@ class TSAMWrapper:
 
     def __call__(self, executor, *args, **kwargs):
         x, timesteps, context, attention_mask, ref_latents, transformer_options = args
-        cond_idx = [i for i, c in enumerate(transformer_options["cond_or_uncond"]) if c == 0]
-        if not cond_idx or not self._active(transformer_options):
+        cond_or_uncond = transformer_options["cond_or_uncond"]
+        per_chunk = x.shape[0] // len(cond_or_uncond)
+        rows = [chunk * per_chunk + i for chunk, c in enumerate(cond_or_uncond) if c == 0 for i in range(per_chunk)]
+        if not rows or not self._active(transformer_options):
             return executor(*args, **kwargs)
 
         if self.target.shape[0] != context.shape[1]:
             raise ValueError(f"T-SAM target has {self.target.shape[0]} tokens but the conditioning has {context.shape[1]}; encode the same prompt with Krea2 T-SAM Encode.")
 
         cfg = self.cfg
-        b = cond_idx[0]
         dit = executor.class_obj
         lo, hi = cfg["layer_start"], min(cfg["layer_end"], len(dit.blocks))
-        sigma = transformer_options["sigmas"][b].to(x.dtype)
+        sigma = transformer_options["sigmas"][rows].to(x.dtype).view(-1, 1, 1, 1)
         x_new = x
         with torch.inference_mode(False), _linear_clones_inference_weights():
             comfy.model_management.in_training = True
@@ -118,24 +128,21 @@ class TSAMWrapper:
                 for _ in range(cfg["iters_per_step"]):
                     xg = x_new.detach().clone().requires_grad_(True)
                     maps = []
-                    undo = self._install(dit, lo, hi, context.shape[1], b, maps)
+                    undo = self._install(dit, lo, hi, context.shape[1], rows, maps)
                     try:
                         executor.original(xg, timesteps_g, context_g, mask_g, refs_g, transformer_options, **kwargs)
                     except _Stop:
                         pass
                     finally:
                         undo()
-                    a = torch.stack(maps).mean(0)
-                    if cfg["smooth"]:
-                        a = tsam.smooth_maps(a, xg.shape[-2] // dit.patch, xg.shape[-1] // dit.patch)
-                    loss = tsam.tsam_loss(self.target.to(a.device), a, cfg["gamma"])
+                    loss = self._loss(torch.stack(maps).mean(0), xg.shape[-2] // dit.patch, xg.shape[-1] // dit.patch)
                     grad, = torch.autograd.grad(loss, xg)
                     comfy.model_management.synchronize()
                     if cfg["normalize_grad"]:
-                        grad = grad / grad.norm().clamp_min(1e-8)
+                        grad = grad / grad.flatten(1).norm(dim=1).clamp_min(1e-8).view(-1, 1, 1, 1)
                     x_new = (xg - cfg["alpha"] * grad).detach()
             finally:
                 comfy.model_management.in_training = False
         out = executor(x_new, timesteps, context, attention_mask, ref_latents, transformer_options, **kwargs).clone()
-        out[b] += ((x[b] - x_new[b]) / sigma).to(out.dtype)
+        out[rows] += ((x[rows] - x_new[rows]) / sigma).to(out.dtype)
         return out

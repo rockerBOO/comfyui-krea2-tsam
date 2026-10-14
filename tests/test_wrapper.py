@@ -76,22 +76,22 @@ def test_checkpointed_gradient_matches_plain_autograd():
     mm.in_training = True
     try:
         xg = x.clone().requires_grad_(True)
-        col = probe.MapCollector(5, lo, hi, 0)
+        col = probe.MapCollector(5, lo, hi, [0])
         opts = {"patches": {"attn1_patch": [col]}}
         m(xg, torch.tensor([1.0]), ctx, transformer_options=opts)
-        plain, = torch.autograd.grad(tsam.tsam_loss(tgt, col.mean(), 2.0), xg)
+        plain, = torch.autograd.grad(wrapper.TSAMWrapper(tgt, cfg())._loss(col.mean(), 4, 4), xg)
 
         xg = x.clone().requires_grad_(True)
         maps = []
         w = wrapper.TSAMWrapper(tgt, cfg())
-        undo = w._install(m, lo, hi, 5, 0, maps)
+        undo = w._install(m, lo, hi, 5, [0], maps)
         try:
             m(xg, torch.tensor([1.0]), ctx)
         except wrapper._Stop:
             pass
         finally:
             undo()
-        ckpt, = torch.autograd.grad(tsam.tsam_loss(tgt, torch.stack(maps).mean(0), 2.0), xg)
+        ckpt, = torch.autograd.grad(w._loss(torch.stack(maps).mean(0), 4, 4), xg)
     finally:
         mm.in_training = False
     assert torch.allclose(plain, ckpt, atol=1e-5, rtol=1e-4)
@@ -112,3 +112,36 @@ def test_inference_mode_weights_and_inputs():
     assert torch.isfinite(out).all()
     assert not torch.allclose(out, plain)
     assert torch.nn.functional.linear is _ORIG_LINEAR
+
+
+def run_batch(m, c, cond_or_uncond, x, ctx, sigma=1.0):
+    opts = {"cond_or_uncond": cond_or_uncond, "sigmas": torch.full((x.shape[0],), sigma), "sample_sigmas": SAMPLE_SIGMAS}
+    pe.add_wrapper_with_key(pe.WrappersMP.DIFFUSION_MODEL, "tsam", wrapper.TSAMWrapper(target(), c), opts)
+    return m(x, torch.full((x.shape[0],), sigma), ctx, transformer_options=opts)
+
+
+def batch_inputs(n):
+    g = torch.Generator().manual_seed(5)
+    return torch.randn(n, 4, 8, 8, generator=g), torch.randn(n, 5, 48, generator=g)
+
+
+def test_every_image_in_the_batch_is_optimised_independently():
+    m = tiny_dit()
+    x, ctx = batch_inputs(2)
+    both = run_batch(m, cfg(), [0], x, ctx)
+    off = run_batch(m, cfg(alpha=0.0), [0], x, ctx)
+    assert not torch.allclose(both[0], off[0])
+    assert not torch.allclose(both[1], off[1])
+    for i in range(2):
+        alone = run_batch(m, cfg(), [0], x[i:i + 1], ctx[i:i + 1])
+        assert torch.allclose(both[i:i + 1], alone, atol=1e-5, rtol=1e-4)
+
+
+def test_stacked_cond_uncond_only_touches_cond_rows():
+    m = tiny_dit()
+    x, ctx = batch_inputs(4)
+    for order, cond_rows in (([0, 1], [0, 1]), ([1, 0], [2, 3])):
+        on = run_batch(m, cfg(), order, x, ctx)
+        off = run_batch(m, cfg(alpha=0.0), order, x, ctx)
+        for r in range(4):
+            assert torch.allclose(on[r], off[r], atol=1e-6) == (r not in cond_rows)
