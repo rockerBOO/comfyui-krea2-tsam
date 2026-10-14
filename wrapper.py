@@ -117,7 +117,7 @@ class TSAMWrapper:
         cfg = self.cfg
         dit = executor.class_obj
         lo, hi = cfg["layer_start"], min(cfg["layer_end"], len(dit.blocks))
-        sigma = transformer_options["sigmas"][rows].to(x.dtype).view(-1, 1, 1, 1)
+        sigma = transformer_options["sigmas"][rows].to(x.dtype).view(-1, *[1] * (x.ndim - 1))
         x_new = x
         with torch.inference_mode(False), _linear_clones_inference_weights():
             comfy.model_management.in_training = True
@@ -139,7 +139,7 @@ class TSAMWrapper:
                     grad, = torch.autograd.grad(loss, xg)
                     comfy.model_management.synchronize()
                     if cfg["normalize_grad"]:
-                        grad = grad / grad.flatten(1).norm(dim=1).clamp_min(1e-8).view(-1, 1, 1, 1)
+                        grad = grad / grad.flatten(1).norm(dim=1).clamp_min(1e-8).view(-1, *[1] * (grad.ndim - 1))
                     x_new = (xg - cfg["alpha"] * grad).detach()
             finally:
                 comfy.model_management.in_training = False

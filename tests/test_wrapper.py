@@ -145,3 +145,13 @@ def test_stacked_cond_uncond_only_touches_cond_rows():
         off = run_batch(m, cfg(alpha=0.0), order, x, ctx)
         for r in range(4):
             assert torch.allclose(on[r], off[r], atol=1e-6) == (r not in cond_rows)
+
+
+def test_five_dim_latents_with_per_row_sigma_and_normalized_grad():
+    m = tiny_dit()
+    g = torch.Generator().manual_seed(6)
+    x, ctx = torch.randn(2, 4, 1, 8, 8, generator=g), torch.randn(2, 5, 48, generator=g)
+    on = run_batch(m, cfg(normalize_grad=True), [0], x, ctx)
+    off = run_batch(m, cfg(alpha=0.0, normalize_grad=True), [0], x, ctx)
+    assert on.shape == x.shape and torch.isfinite(on).all()
+    assert not torch.allclose(on[0], off[0]) and not torch.allclose(on[1], off[1])
