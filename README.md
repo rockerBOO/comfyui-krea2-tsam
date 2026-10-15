@@ -30,6 +30,8 @@ Restart ComfyUI. The nodes appear under `conditioning/krea2` and `model_patches/
 1. Encode the prompt with **Krea2 T-SAM Encode** and use its `CONDITIONING` as the sampler's positive input.
 2. Pass the `TSAM_TARGET` and your Krea 2 model to **Krea2 T-SAM** and sample with the returned `MODEL`.
 
+An example workflow is in [example_workflows/krea2_tsam_turbo.json](example_workflows/krea2_tsam_turbo.json): Krea 2 with a turbo LoRA, 8 steps, `euler`, `alpha=30` with `normalize_grad`. Pick your own model, CLIP and LoRA files in the loaders.
+
 The extra gradient steps are slow: roughly 2.5x a normal step at 768px on the active steps (`start_pct`..`end_pct`), and the steps after that run at normal speed. Samplers that call the model several times per step (e.g. `res_3s`) run T-SAM on every call.
 
 ## Nodes
