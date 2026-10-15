@@ -4,6 +4,34 @@ T-SAM (Text Self-Attention-guided alignment) for Krea 2, from Fakhabi, "Text-Ima
 
 At a few early steps the latent is nudged so the similarity matrix of image-to-text attention maps matches the text encoder's self-attention matrix.
 
+## Install
+
+Needs a ComfyUI with Krea 2 support (`comfy/ldm/krea2`, `comfy/text_encoders/krea2.py`). No extra Python dependencies.
+
+### ComfyUI Manager
+
+Install via Git URL:
+
+```
+https://github.com/rockerBOO/comfyui-krea2-tsam
+```
+
+### Manual
+
+```bash
+cd ComfyUI/custom_nodes
+git clone https://github.com/rockerBOO/comfyui-krea2-tsam
+```
+
+Restart ComfyUI. The nodes appear under `conditioning/krea2` and `model_patches/krea2`.
+
+## Usage
+
+1. Encode the prompt with **Krea2 T-SAM Encode** and use its `CONDITIONING` as the sampler's positive input.
+2. Pass the `TSAM_TARGET` and your Krea 2 model to **Krea2 T-SAM** and sample with the returned `MODEL`.
+
+The extra gradient steps are slow: roughly 2.5x a normal step at 768px on the active steps (`start_pct`..`end_pct`), and the steps after that run at normal speed. Samplers that call the model several times per step (e.g. `res_3s`) run T-SAM on every call.
+
 ## Nodes
 
 - **Krea2 T-SAM Encode** (`CLIP`, text -> `CONDITIONING`, `TSAM_TARGET`): encodes normally and builds the text target `T` from Qwen3-VL attention. Use the same CLIP and prompt for the sampler's positive input and this node.
