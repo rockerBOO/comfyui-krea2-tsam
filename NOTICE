@@ -1,0 +1,5 @@
+comfyui-krea2-tsam
+Copyright 2026 Dave Lage
+
+Implements the T-SAM method from "Text-Image Alignment in Diffusion Models:
+The Role of Attention Sink" by Erfan Esmaeili Fakhabi (Purdue University, 2025).

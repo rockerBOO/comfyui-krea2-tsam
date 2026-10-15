@@ -69,4 +69,4 @@ If you use this, please cite the thesis the method comes from:
 
 ## License
 
-Apache License 2.0, see [LICENSE](LICENSE). The license covers this code only, not the thesis.
+Copyright 2026 Dave Lage. Apache License 2.0, see [LICENSE](LICENSE) and [NOTICE](NOTICE). The license covers this code only, not the thesis.
