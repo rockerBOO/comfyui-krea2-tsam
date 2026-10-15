@@ -1,6 +1,6 @@
 # comfyui-krea2-tsam
 
-T-SAM (Text Self-Attention-guided alignment) for Krea 2, from Fakhabi, "Text-Image Alignment in Diffusion Models: The Role of Attention Sink" (Purdue MS thesis, 2025), chapter 5.
+ComfyUI nodes for T-SAM (Text Self-Attention-guided alignment) on Krea 2. This is an independent implementation of the method from chapter 5 of Erfan Esmaeili Fakhabi's master's thesis, [Text-Image Alignment in Diffusion Models: The Role of Attention Sink](https://hammer.purdue.edu/articles/dataset/_b_Text-Image_Alignment_in_Diffusion_Models_The_Role_of_Attention_Sink_b_/28908740?file=54319586) (Purdue University, 2025). The method and its equations come from that thesis; the adaptation to Krea 2's single-stream DiT (and any mistakes in it) are mine. It is not affiliated with the author or Purdue.
 
 At a few early steps the latent is nudged so the similarity matrix of image-to-text attention maps matches the text encoder's self-attention matrix.
 
@@ -49,3 +49,24 @@ Inputs of `Krea2 T-SAM`: `alpha`, `gamma`, `start_pct`, `end_pct`, `iters_per_st
 ## Tests
 
 `./run_tests.sh` (CPU, tiny Krea 2 DiT, no checkpoint).
+
+## Citation
+
+If you use this, please cite the thesis the method comes from:
+
+```bibtex
+@mastersthesis{fakhabi2025textimage,
+  author  = {Esmaeili Fakhabi, Erfan},
+  title   = {Text-Image Alignment in Diffusion Models: The Role of Attention Sink},
+  school  = {Purdue University},
+  address = {West Lafayette, Indiana},
+  year    = {2025},
+  month   = may,
+  type    = {Master's thesis},
+  url     = {https://hammer.purdue.edu/articles/dataset/_b_Text-Image_Alignment_in_Diffusion_Models_The_Role_of_Attention_Sink_b_/28908740}
+}
+```
+
+## License
+
+Apache License 2.0, see [LICENSE](LICENSE). The license covers this code only, not the thesis.
